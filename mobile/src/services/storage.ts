@@ -1,41 +1,56 @@
-import * as SecureStore from "expo-secure-store";
+/**
+ * Persistent storage using AsyncStorage with in-memory fallback.
+ * Token survives app restarts.
+ */
 
-// In-memory fallback for Expo Go
-const memoryStore: Record<string, string> = {};
+// In-memory fallback (always available immediately)
+const mem: Record<string, string> = {};
+
+// Try to import AsyncStorage — works in Expo Go with correct version
+let AsyncStorage: any = null;
+try {
+  AsyncStorage = require("@react-native-async-storage/async-storage").default;
+} catch {
+  console.log("AsyncStorage not available, using memory only");
+}
 
 export const storage = {
   async set(key: string, value: string): Promise<void> {
+    mem[key] = value; // always keep in memory for fast sync access
     try {
-      await SecureStore.setItemAsync(key, value);
-    } catch {
-      memoryStore[key] = value;
+      if (AsyncStorage) await AsyncStorage.setItem(key, value);
+    } catch (e) {
+      console.log("storage.set error:", e);
     }
-    // Always keep in memory for fast synchronous access
-    memoryStore[key] = value;
   },
 
   async get(key: string): Promise<string | null> {
-    // Try SecureStore first
+    // Try AsyncStorage first (persisted)
     try {
-      const val = await SecureStore.getItemAsync(key);
-      if (val) {
-        memoryStore[key] = val; // sync to memory
-        return val;
+      if (AsyncStorage) {
+        const val = await AsyncStorage.getItem(key);
+        if (val !== null) {
+          mem[key] = val; // sync to memory
+          return val;
+        }
       }
-    } catch {}
+    } catch (e) {
+      console.log("storage.get error:", e);
+    }
     // Fall back to memory
-    return memoryStore[key] ?? null;
+    return mem[key] ?? null;
   },
 
   async remove(key: string): Promise<void> {
+    delete mem[key];
     try {
-      await SecureStore.deleteItemAsync(key);
-    } catch {}
-    delete memoryStore[key];
+      if (AsyncStorage) await AsyncStorage.removeItem(key);
+    } catch (e) {
+      console.log("storage.remove error:", e);
+    }
   },
 
-  // Synchronous memory read — use after async get has been called once
   getSync(key: string): string | null {
-    return memoryStore[key] ?? null;
+    return mem[key] ?? null;
   },
 };

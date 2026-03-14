@@ -3,19 +3,25 @@ import Pusher from "pusher-js/react-native";
 import * as SecureStore from "expo-secure-store";
 
 // ── Update these to match your setup ─────────────────────────
-const REVERB_HOST = "192.168.1.176"; // ← your PC LAN IP
+const REVERB_HOST = "192.168.18.38"; // ← your PC LAN IP
 const REVERB_PORT = 8080;
 const REVERB_APP_KEY = "qxfl2zvaxavxdxpwn3mj"; // ← must match REVERB_APP_KEY in .env
 
 (global as any).Pusher = Pusher;
 
 let echoInstance: Echo | null = null;
+let _authToken: string | null = null;
 
-export async function getEcho(): Promise<Echo> {
+// ── Set token from AuthContext after login ────────────────────
+export function setEchoToken(token: string | null) {
+  _authToken = token;
+  if (!token) disconnectEcho();
+}
+
+// ── Create Echo instance ──────────────────────────────────────
+export function getEcho(): Echo {
   if (echoInstance) return echoInstance;
-
-  const token = await SecureStore.getItemAsync("auth_token");
-  if (!token) throw new Error("No auth token");
+  if (!_authToken) throw new Error("No auth token for Echo");
 
   echoInstance = new Echo({
     broadcaster: "reverb",
@@ -28,7 +34,7 @@ export async function getEcho(): Promise<Echo> {
     authEndpoint: `http://${REVERB_HOST}:8000/broadcasting/auth`,
     auth: {
       headers: {
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${_authToken}`,
         Accept: "application/json",
       },
     },
@@ -46,15 +52,16 @@ export function disconnectEcho(): void {
   }
 }
 
-export async function listenConversation(
+// ── DM conversation channel ───────────────────────────────────
+export function listenConversation(
   conversationId: number,
-  onMessage: (message: any) => void,
+  onMessage: (msg: any) => void,
 ) {
   try {
-    const echo = await getEcho();
-    echo
+    getEcho()
       .private(`conversation.${conversationId}`)
       .listen(".MessageSent", (e: any) => {
+        console.log("WS DM:", conversationId, e?.message?.id);
         onMessage(e.message);
       });
   } catch (err) {
@@ -62,50 +69,74 @@ export async function listenConversation(
   }
 }
 
-export async function leaveConversation(conversationId: number) {
+export function leaveConversation(conversationId: number) {
   try {
-    const echo = await getEcho();
-    echo.leave(`conversation.${conversationId}`);
+    getEcho().leave(`conversation.${conversationId}`);
   } catch {}
 }
 
-export async function listenGroup(
-  groupId: number,
-  onMessage: (message: any) => void,
-) {
+// ── Group channel ─────────────────────────────────────────────
+export function listenGroup(groupId: number, onMessage: (msg: any) => void) {
   try {
-    const echo = await getEcho();
-    echo.private(`group.${groupId}`).listen(".MessageSent", (e: any) => {
-      onMessage(e.message);
-    });
+    getEcho()
+      .private(`group.${groupId}`)
+      .listen(".MessageSent", (e: any) => {
+        console.log("WS group:", groupId, e?.message?.id);
+        onMessage(e.message);
+      });
   } catch (err) {
     console.log("listenGroup error:", err);
   }
 }
 
-export async function leaveGroup(groupId: number) {
+export function leaveGroup(groupId: number) {
   try {
-    const echo = await getEcho();
-    echo.leave(`group.${groupId}`);
+    getEcho().leave(`group.${groupId}`);
   } catch {}
 }
 
-export async function joinOnlineChannel(callbacks: {
+// ── Presence channel ──────────────────────────────────────────
+export function joinOnlineChannel(callbacks: {
   onJoin?: (members: any[]) => void;
   onJoining?: (member: any) => void;
   onLeaving?: (member: any) => void;
 }) {
-  const echo = await getEcho(); // throws if no token — caller handles it
-  const ch = echo.join("online");
-  if (callbacks.onJoin) ch.here(callbacks.onJoin);
-  if (callbacks.onJoining) ch.joining(callbacks.onJoining);
-  if (callbacks.onLeaving) ch.leaving(callbacks.onLeaving);
-  return ch;
+  try {
+    const ch = getEcho().join("online");
+    if (callbacks.onJoin) ch.here(callbacks.onJoin);
+    if (callbacks.onJoining) ch.joining(callbacks.onJoining);
+    if (callbacks.onLeaving) ch.leaving(callbacks.onLeaving);
+    return ch;
+  } catch (err) {
+    console.log("online channel error:", err);
+  }
 }
 
-export async function leaveOnlineChannel() {
+export function leaveOnlineChannel() {
   try {
-    const echo = await getEcho();
-    echo.leave("online");
+    getEcho().leave("online");
+  } catch {}
+}
+
+// ── Personal user channel ─────────────────────────────────────
+export function listenUserChannel(
+  userId: number,
+  onMessage: (msg: any) => void,
+) {
+  try {
+    getEcho()
+      .private(`user.${userId}`)
+      .listen(".MessageSent", (e: any) => {
+        console.log("WS user channel:", e?.message?.id);
+        onMessage(e.message);
+      });
+  } catch (err) {
+    console.log("listenUserChannel error:", err);
+  }
+}
+
+export function leaveUserChannel(userId: number) {
+  try {
+    getEcho().leave(`user.${userId}`);
   } catch {}
 }

@@ -10,6 +10,8 @@ import {
 } from "react-native";
 
 import { AuthProvider, useAuth } from "@/src/context/AuthContext";
+import { RealtimeProvider } from "@/src/context/RealtimeContext";
+import NotificationBanner from "@/components/NotificationBanner";
 
 // ── Error Boundary ────────────────────────────────────────────
 interface EBState {
@@ -69,8 +71,6 @@ function AuthGate() {
   const segments = useSegments();
   const router = useRouter();
 
-  console.log("AuthGate:", { isAuthenticated, isLoading, segments });
-
   useEffect(() => {
     if (isLoading) return;
     const inAuth = segments[0] === "(auth)";
@@ -100,36 +100,38 @@ function AuthGate() {
       </View>
     );
   }
-
   return null;
 }
 
-// ── Root Layout ───────────────────────────────────────────────
+// ── Root layout ───────────────────────────────────────────────
 export default function RootLayout() {
   return (
     <ErrorBoundary>
       <AuthProvider>
-        <Stack>
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-          <Stack.Screen name="chat/[id]" options={{ headerShown: true }} />
-          <Stack.Screen
-            name="chat/search"
-            options={{ headerShown: true, title: "New Message" }}
-          />
-          <Stack.Screen name="group/[id]" options={{ headerShown: true }} />
-          <Stack.Screen
-            name="group/create"
-            options={{ headerShown: true, title: "New Group" }}
-          />
-          <Stack.Screen
-            name="group/detail"
-            options={{ headerShown: true, title: "Group Info" }}
-          />
-          <Stack.Screen name="modal" options={{ presentation: "modal" }} />
-        </Stack>
-        <AuthGate />
-        <StatusBar style="auto" />
+        <RealtimeProvider>
+          <Stack>
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+            <Stack.Screen name="chat/[id]" options={{ headerShown: true }} />
+            <Stack.Screen
+              name="chat/search"
+              options={{ headerShown: true, title: "New Message" }}
+            />
+            <Stack.Screen name="group/[id]" options={{ headerShown: true }} />
+            <Stack.Screen
+              name="group/create"
+              options={{ headerShown: true, title: "New Group" }}
+            />
+            <Stack.Screen
+              name="group/detail"
+              options={{ headerShown: true, title: "Group Info" }}
+            />
+            <Stack.Screen name="modal" options={{ presentation: "modal" }} />
+          </Stack>
+          <AuthGate />
+          <NotificationBanner />
+          <StatusBar style="auto" />
+        </RealtimeProvider>
       </AuthProvider>
     </ErrorBoundary>
   );

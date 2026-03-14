@@ -27,9 +27,10 @@ export default function ProfileScreen() {
   const [uploadingAv, setUploadingAv] = useState(false);
 
   const [showPass, setShowPass] = useState(false);
+  const [currentPass, setCurrentPass] = useState("");
   const [newPass, setNewPass] = useState("");
   const [confirmPass, setConfirmPass] = useState("");
-  const [passErr, setPassErr] = useState("");
+  const [passErr, setPassErr] = useState({ current: "", new: "", confirm: "" });
   const [savingPass, setSavingPass] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
 
@@ -90,27 +91,40 @@ export default function ProfileScreen() {
 
   // ── Change password ───────────────────────────────────────
   const savePassword = async () => {
+    const errs = { current: "", new: "", confirm: "" };
+    let ok = true;
+    if (!currentPass) {
+      errs.current = "Current password is required.";
+      ok = false;
+    }
     if (!newPass || newPass.length < 8) {
-      setPassErr("Minimum 8 characters.");
-      return;
+      errs.new = "Minimum 8 characters.";
+      ok = false;
     }
     if (newPass !== confirmPass) {
-      setPassErr("Passwords do not match.");
-      return;
+      errs.confirm = "Passwords do not match.";
+      ok = false;
     }
-    setPassErr("");
+    setPassErr(errs);
+    if (!ok) return;
     setSavingPass(true);
     try {
-      await userService.updateProfile({ password: newPass });
+      await userService.updateProfile({
+        current_password: currentPass,
+        password: newPass,
+      });
       Alert.alert("✅ Updated", "Password changed.");
+      setCurrentPass("");
       setNewPass("");
       setConfirmPass("");
+      setPassErr({ current: "", new: "", confirm: "" });
       setShowPass(false);
     } catch (e: any) {
-      Alert.alert(
-        "Error",
-        e?.response?.data?.message ?? "Could not change password.",
-      );
+      const msg =
+        e?.response?.data?.message ??
+        e?.response?.data?.errors?.current_password?.[0] ??
+        "Could not change password.";
+      Alert.alert("Error", msg);
     } finally {
       setSavingPass(false);
     }
@@ -238,31 +252,51 @@ export default function ProfileScreen() {
 
         {showPass && (
           <View style={{ marginTop: 8 }}>
+            <Text style={s.label}>Current Password</Text>
+            <TextInput
+              style={[s.input, passErr.current ? s.inputErr : null]}
+              value={currentPass}
+              onChangeText={(v) => {
+                setCurrentPass(v);
+                setPassErr((p) => ({ ...p, current: "" }));
+              }}
+              secureTextEntry
+              placeholder="Enter current password"
+              placeholderTextColor="#999"
+            />
+            {!!passErr.current && (
+              <Text style={s.errText}>{passErr.current}</Text>
+            )}
+
             <Text style={s.label}>New Password</Text>
             <TextInput
-              style={[s.input, passErr ? s.inputErr : null]}
+              style={[s.input, passErr.new ? s.inputErr : null]}
               value={newPass}
               onChangeText={(v) => {
                 setNewPass(v);
-                setPassErr("");
+                setPassErr((p) => ({ ...p, new: "" }));
               }}
               secureTextEntry
               placeholder="Min. 8 characters"
               placeholderTextColor="#999"
             />
-            <Text style={s.label}>Confirm Password</Text>
+            {!!passErr.new && <Text style={s.errText}>{passErr.new}</Text>}
+
+            <Text style={s.label}>Confirm New Password</Text>
             <TextInput
-              style={[s.input, passErr ? s.inputErr : null]}
+              style={[s.input, passErr.confirm ? s.inputErr : null]}
               value={confirmPass}
               onChangeText={(v) => {
                 setConfirmPass(v);
-                setPassErr("");
+                setPassErr((p) => ({ ...p, confirm: "" }));
               }}
               secureTextEntry
               placeholder="Repeat new password"
               placeholderTextColor="#999"
             />
-            {!!passErr && <Text style={s.errText}>{passErr}</Text>}
+            {!!passErr.confirm && (
+              <Text style={s.errText}>{passErr.confirm}</Text>
+            )}
             <TouchableOpacity
               style={[s.btn, s.btnGreen, savingPass && s.btnDisabled]}
               onPress={savePassword}

@@ -2,23 +2,25 @@ import React, { useEffect, useState, useRef } from "react";
 import {
   View,
   FlatList,
-  TextInput,
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
   Platform,
   Text,
-  SafeAreaView,
   KeyboardAvoidingView,
   Alert,
   Modal,
   Pressable,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { messageService } from "@/src/services/services";
+import { listenGroup, leaveGroup } from "@/src/services/echo";
+import { activeScreen } from "@/src/context/RealtimeContext";
 import { useAuth } from "@/src/context/AuthContext";
 import { Message } from "@/src/types";
 import MessageBubble from "@/components/MessageBubble";
+import ChatInput, { AttachFile } from "@/components/ChatInput";
 
 export default function GroupChatScreen() {
   const { id, name } = useLocalSearchParams<{ id: string; name: string }>();
@@ -29,16 +31,14 @@ export default function GroupChatScreen() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(true);
-  const [sending, setSending] = useState(false);
   const [editingMsg, setEditingMsg] = useState<Message | null>(null);
   const [editText, setEditText] = useState("");
   const [menuMsg, setMenuMsg] = useState<Message | null>(null);
   const [menuVisible, setMenuVisible] = useState(false);
 
   const listRef = useRef<FlatList>(null);
-  const inputRef = useRef<TextInput>(null);
+  const seenIds = useRef<Set<number>>(new Set());
 
-  // ── Header ────────────────────────────────────────────────
   useEffect(() => {
     navigation.setOptions({
       title: name ?? "Group",
@@ -58,38 +58,45 @@ export default function GroupChatScreen() {
   const scrollDown = () =>
     setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 120);
 
-  // ── Load messages ─────────────────────────────────────────
-  const load = async () => {
-    if (!id) return;
-    try {
-      const res = await messageService.getGroupMessages(Number(id));
-      const msgs = (res.data ?? []).slice().reverse();
-      setMessages(msgs);
-      scrollDown();
-    } catch (e: any) {
-      console.log("group load err:", e?.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    load();
+    if (!id) return;
+    activeScreen.groupId = Number(id);
+    setLoading(true);
+    messageService
+      .getGroupMessages(Number(id))
+      .then((res) => {
+        const msgs = (res.data ?? []).slice().reverse();
+        msgs.forEach((m: Message) => seenIds.current.add(m.id));
+        setMessages(msgs);
+        scrollDown();
+      })
+      .catch((e) => console.log("group load err:", e?.message))
+      .finally(() => setLoading(false));
+
+    listenGroup(Number(id), (incoming: Message) => {
+      if (!incoming?.id || seenIds.current.has(incoming.id)) return;
+      if (incoming.sender?.id === user?.id) return;
+      seenIds.current.add(incoming.id);
+      setMessages((prev) => [...prev, incoming]);
+      scrollDown();
+    });
+
+    return () => {
+      activeScreen.groupId = 0;
+      leaveGroup(Number(id));
+    };
   }, [id]);
 
-  // ── Long press menu ───────────────────────────────────────
   const openMenu = (msg: Message) => {
-    if (msg.sender?.id !== user?.id) return; // only own messages
+    if (msg.sender?.id !== user?.id) return;
     setMenuMsg(msg);
     setMenuVisible(true);
   };
-
   const closeMenu = () => {
     setMenuVisible(false);
     setMenuMsg(null);
   };
 
-  // ── Delete message ────────────────────────────────────────
   const confirmDelete = (msg: Message) => {
     closeMenu();
     Alert.alert("Delete Message", "Delete this message?", [
@@ -102,29 +109,22 @@ export default function GroupChatScreen() {
             await messageService.delete(msg.id);
             setMessages((prev) => prev.filter((m) => m.id !== msg.id));
           } catch (e: any) {
-            Alert.alert(
-              "Error",
-              e?.response?.data?.message ?? "Failed to delete.",
-            );
+            Alert.alert("Error", e?.response?.data?.message ?? "Failed.");
           }
         },
       },
     ]);
   };
 
-  // ── Edit message ──────────────────────────────────────────
   const startEdit = (msg: Message) => {
     closeMenu();
     setEditingMsg(msg);
     setEditText(msg.message ?? "");
-    setTimeout(() => inputRef.current?.focus(), 100);
   };
-
   const cancelEdit = () => {
     setEditingMsg(null);
     setEditText("");
   };
-
   const saveEdit = async () => {
     if (!editingMsg || !editText.trim()) return;
     try {
@@ -136,38 +136,34 @@ export default function GroupChatScreen() {
       );
       cancelEdit();
     } catch (e: any) {
-      Alert.alert("Error", e?.response?.data?.message ?? "Failed to edit.");
+      Alert.alert("Error", e?.response?.data?.message ?? "Failed.");
     }
   };
 
-  // ── Send message ──────────────────────────────────────────
-  const send = async () => {
-    const trimmed = text.trim();
-    if (!trimmed || sending || !id) return;
-    setText("");
-    setSending(true);
+  const handleSend = async (text: string, files: AttachFile[]) => {
+    if (!id) return;
     try {
-      const msg = await messageService.sendToGroup(Number(id), trimmed);
-      console.log("group sent id:", msg?.id);
+      const msg = await messageService.sendToGroup(
+        Number(id),
+        text || undefined,
+        files.length ? files : undefined,
+      );
+      seenIds.current.add(msg.id);
       setMessages((prev) => [...prev, msg]);
+      setText("");
       scrollDown();
     } catch (e: any) {
       console.log("group send err:", e?.message, e?.response?.status);
-      setText(trimmed);
-    } finally {
-      setSending(false);
+      Alert.alert("Error", "Could not send message.");
     }
   };
 
-  if (loading) {
+  if (loading)
     return (
       <View style={s.center}>
         <ActivityIndicator size="large" color="#0a7ea4" />
       </View>
     );
-  }
-
-  const isEditing = !!editingMsg;
 
   return (
     <SafeAreaView style={s.safe}>
@@ -176,17 +172,16 @@ export default function GroupChatScreen() {
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 80}
       >
-        {/* Messages */}
         <FlatList
           ref={listRef}
           data={messages}
-          keyExtractor={(m, i) => `gmsg-${m.id ?? i}`}
+          keyExtractor={(m, i) => `g-${m.id ?? i}`}
           contentContainerStyle={s.listContent}
           onContentSizeChange={scrollDown}
           ListEmptyComponent={
             <View style={s.empty}>
               <Text style={{ fontSize: 40 }}>👋</Text>
-              <Text style={s.emptyText}>No messages yet. Say hello!</Text>
+              <Text style={s.emptyText}>No messages yet!</Text>
             </View>
           }
           renderItem={({ item }) => (
@@ -204,101 +199,73 @@ export default function GroupChatScreen() {
           )}
         />
 
-        {/* Edit banner */}
-        {isEditing && (
+        {editingMsg && (
           <View style={s.editBanner}>
-            <Text style={s.editBannerLabel}>✏️ Editing message</Text>
+            <Text style={s.editLabel}>✏️ Editing message</Text>
             <TouchableOpacity onPress={cancelEdit}>
-              <Text style={s.editBannerCancel}>✕ Cancel</Text>
+              <Text style={s.editCancel}>✕ Cancel</Text>
             </TouchableOpacity>
           </View>
         )}
 
-        {/* Input bar */}
-        <View style={s.bar}>
-          <TextInput
-            ref={inputRef}
-            style={[s.input, isEditing && s.inputEditing]}
-            placeholder={isEditing ? "Edit message..." : "Message group..."}
-            placeholderTextColor="#999"
-            value={isEditing ? editText : text}
-            onChangeText={isEditing ? setEditText : setText}
-            multiline
-            maxLength={2000}
-            onFocus={scrollDown}
-          />
-          {isEditing ? (
-            <TouchableOpacity
-              style={[
-                s.btn,
-                { backgroundColor: editText.trim() ? "#27ae60" : "#ccc" },
-              ]}
-              onPress={saveEdit}
-              disabled={!editText.trim()}
-              activeOpacity={0.8}
-            >
-              <Text style={{ color: "#fff", fontSize: 18 }}>✓</Text>
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity
-              style={[
-                s.btn,
-                { backgroundColor: text.trim() ? "#0a7ea4" : "#ccc" },
-              ]}
-              onPress={send}
-              disabled={sending}
-              activeOpacity={0.8}
-            >
-              {sending ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <Text style={{ color: "#fff", fontSize: 20 }}>➤</Text>
-              )}
-            </TouchableOpacity>
-          )}
-        </View>
+        <ChatInput
+          value={text}
+          onChangeText={setText}
+          onSend={handleSend}
+          placeholder="Message group..."
+          isEditing={!!editingMsg}
+          editValue={editText}
+          onEditChange={setEditText}
+          onSaveEdit={saveEdit}
+          onCancelEdit={cancelEdit}
+          onFocus={scrollDown}
+        />
       </KeyboardAvoidingView>
 
-      {/* Action menu modal */}
       <Modal
         visible={menuVisible}
         transparent
         animationType="fade"
         onRequestClose={closeMenu}
       >
-        <Pressable style={s.modalOverlay} onPress={closeMenu}>
-          <View style={s.menuCard}>
+        <Pressable style={s.overlay} onPress={closeMenu}>
+          <View style={s.menu}>
             <Text style={s.menuTitle} numberOfLines={2}>
               "{menuMsg?.message}"
             </Text>
-
             <TouchableOpacity
               style={s.menuItem}
               onPress={() => startEdit(menuMsg!)}
             >
-              <Text style={s.menuItemIcon}>✏️</Text>
-              <Text style={s.menuItemText}>Edit Message</Text>
+              <Text style={s.menuIcon}>✏️</Text>
+              <Text style={s.menuText}>Edit Message</Text>
             </TouchableOpacity>
-
-            <View style={s.menuDivider} />
-
+            <View
+              style={{
+                height: 1,
+                backgroundColor: "#f0f0f0",
+                marginHorizontal: 16,
+              }}
+            />
             <TouchableOpacity
               style={s.menuItem}
               onPress={() => confirmDelete(menuMsg!)}
             >
-              <Text style={s.menuItemIcon}>🗑️</Text>
-              <Text style={[s.menuItemText, { color: "#e74c3c" }]}>
+              <Text style={s.menuIcon}>🗑️</Text>
+              <Text style={[s.menuText, { color: "#e74c3c" }]}>
                 Delete Message
               </Text>
             </TouchableOpacity>
-
             <TouchableOpacity
-              style={[s.menuItem, s.menuCancel]}
+              style={[
+                s.menuItem,
+                { borderTopWidth: 8, borderTopColor: "#f5f5f5" },
+              ]}
               onPress={closeMenu}
             >
               <Text
                 style={[
-                  s.menuItemText,
+                  s.menuText,
                   { color: "#666", textAlign: "center", width: "100%" },
                 ]}
               >
@@ -323,45 +290,7 @@ const s = StyleSheet.create({
     justifyContent: "center",
     paddingTop: 60,
   },
-  emptyText: { color: "#888", marginTop: 8, fontSize: 14, textAlign: "center" },
-
-  // ── Input bar ──
-  bar: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    padding: 10,
-    paddingBottom: Platform.OS === "android" ? 14 : 10,
-    backgroundColor: "#fff",
-    borderTopWidth: 1,
-    borderTopColor: "#ddd",
-    gap: 8,
-  },
-  input: {
-    flex: 1,
-    minHeight: 46,
-    maxHeight: 120,
-    borderWidth: 1.5,
-    borderColor: "#ccc",
-    borderRadius: 24,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    fontSize: 15,
-    backgroundColor: "#f8f8f8",
-    color: "#000",
-  },
-  inputEditing: {
-    borderColor: "#27ae60",
-    backgroundColor: "#f0fff4",
-  },
-  btn: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-
-  // ── Edit banner ──
+  emptyText: { color: "#888", marginTop: 8 },
   editBanner: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -372,17 +301,15 @@ const s = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: "#27ae60",
   },
-  editBannerLabel: { color: "#27ae60", fontWeight: "600", fontSize: 13 },
-  editBannerCancel: { color: "#e74c3c", fontWeight: "600", fontSize: 13 },
-
-  // ── Action menu modal ──
-  modalOverlay: {
+  editLabel: { color: "#27ae60", fontWeight: "600", fontSize: 13 },
+  editCancel: { color: "#e74c3c", fontWeight: "600", fontSize: 13 },
+  overlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.45)",
     justifyContent: "flex-end",
     paddingBottom: 30,
   },
-  menuCard: {
+  menu: {
     marginHorizontal: 16,
     backgroundColor: "#fff",
     borderRadius: 16,
@@ -404,12 +331,6 @@ const s = StyleSheet.create({
     paddingHorizontal: 20,
     gap: 12,
   },
-  menuItemIcon: { fontSize: 20 },
-  menuItemText: { fontSize: 16, color: "#111", fontWeight: "500" },
-  menuDivider: { height: 1, backgroundColor: "#f0f0f0", marginHorizontal: 16 },
-  menuCancel: {
-    borderTopWidth: 8,
-    borderTopColor: "#f5f5f5",
-    justifyContent: "center",
-  },
+  menuIcon: { fontSize: 20 },
+  menuText: { fontSize: 16, color: "#111", fontWeight: "500" },
 });

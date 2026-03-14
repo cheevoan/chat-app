@@ -68,11 +68,22 @@ class UserController extends Controller
         $user = $request->user();
 
         $data = $request->validate([
-            'name'         => ['sometimes', 'string', 'max:255'],
-            'email'        => ['sometimes', 'email', 'unique:users,email,' . $user->id],
-            'password'     => ['sometimes', 'confirmed', 'min:8'],
-            'avatar'       => ['sometimes', 'image', 'max:2048'],
+            'name'             => ['sometimes', 'string', 'max:255'],
+            'email'            => ['sometimes', 'email', 'unique:users,email,' . $user->id],
+            'current_password' => ['sometimes', 'required_with:password', 'string'],
+            'password'         => ['sometimes', 'confirmed', 'min:8'],
+            'avatar'           => ['sometimes', 'image', 'max:2048'],
         ]);
+
+        // Verify current password before allowing change
+        if (isset($data['password'])) {
+            if (empty($data['current_password']) || ! Hash::check($data['current_password'], $user->password)) {
+                return response()->json([
+                    'message' => 'The current password is incorrect.',
+                    'errors'  => ['current_password' => ['The current password is incorrect.']],
+                ], 422);
+            }
+        }
 
         if ($request->hasFile('avatar')) {
             if ($user->avatar) {

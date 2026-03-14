@@ -14,14 +14,15 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { conversationService } from "@/src/services/services";
 import { Conversation } from "@/src/types";
 import { useAuth } from "@/src/context/AuthContext";
+import { useOnline } from "@/src/context/RealtimeContext";
 import Avatar from "@/components/Avatar";
 
 export default function ChatsScreen() {
-  console.log("ChatsScreen mounted");
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { isAuthenticated } = useAuth();
-  const navigating = useRef(false); // prevent double-tap stacking
+  const { isOnline } = useOnline();
+  const navigating = useRef(false);
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(false);
@@ -35,10 +36,8 @@ export default function ChatsScreen() {
     setError("");
     try {
       const res = await conversationService.list();
-      console.log("conversations loaded:", res.data?.length ?? 0);
       setConversations(res.data ?? []);
     } catch (err: any) {
-      console.log("CONVERSATIONS ERROR:", err?.response?.status, err?.message);
       setError(err?.message ?? "Failed to load.");
     } finally {
       setLoading(false);
@@ -50,7 +49,6 @@ export default function ChatsScreen() {
     if (isAuthenticated) load();
   }, [isAuthenticated]);
 
-  // Open chat — guard against double tap
   const openChat = (item: Conversation) => {
     if (navigating.current) return;
     navigating.current = true;
@@ -98,7 +96,6 @@ export default function ChatsScreen() {
 
   return (
     <View style={[s.flex, { paddingTop: insets.top }]}>
-      {/* Header */}
       <View style={s.header}>
         <Text style={s.headerTitle}>Messages</Text>
         <TouchableOpacity
@@ -109,7 +106,6 @@ export default function ChatsScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Search */}
       <View style={s.searchWrap}>
         <TextInput
           style={s.searchInput}
@@ -146,34 +142,48 @@ export default function ChatsScreen() {
             )}
           </View>
         }
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            style={s.row}
-            onPress={() => openChat(item)}
-            activeOpacity={0.6}
-          >
-            <Avatar
-              name={item.other_user.name}
-              uri={item.other_user.avatar}
-              size={50}
-            />
-            <View style={s.rowInfo}>
-              <View style={s.rowTop}>
-                <Text style={s.rowName} numberOfLines={1}>
-                  {item.other_user.name}
-                </Text>
-                {item.last_message?.created_at && (
-                  <Text style={s.rowTime}>
-                    {timeLabel(item.last_message.created_at)}
-                  </Text>
-                )}
+        renderItem={({ item }) => {
+          const online = isOnline(item.other_user.id);
+          return (
+            <TouchableOpacity
+              style={s.row}
+              onPress={() => openChat(item)}
+              activeOpacity={0.6}
+            >
+              <View>
+                <Avatar
+                  name={item.other_user.name}
+                  uri={item.other_user.avatar}
+                  size={50}
+                />
+                {/* Online dot */}
+                {online && <View style={s.onlineDot} />}
               </View>
-              <Text style={s.rowMsg} numberOfLines={1}>
-                {item.last_message?.message ?? "No messages yet"}
-              </Text>
-            </View>
-          </TouchableOpacity>
-        )}
+              <View style={s.rowInfo}>
+                <View style={s.rowTop}>
+                  <View style={s.rowNameWrap}>
+                    <Text style={s.rowName} numberOfLines={1}>
+                      {item.other_user.name}
+                    </Text>
+                    {online && (
+                      <View style={s.onlineBadge}>
+                        <Text style={s.onlineBadgeText}>Online</Text>
+                      </View>
+                    )}
+                  </View>
+                  {item.last_message?.created_at && (
+                    <Text style={s.rowTime}>
+                      {timeLabel(item.last_message.created_at)}
+                    </Text>
+                  )}
+                </View>
+                <Text style={s.rowMsg} numberOfLines={1}>
+                  {item.last_message?.message ?? "No messages yet"}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          );
+        }}
       />
     </View>
   );
@@ -187,7 +197,6 @@ const s = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "#fff",
   },
-  // header
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -206,7 +215,6 @@ const s = StyleSheet.create({
     borderRadius: 999,
   },
   newBtnText: { color: "#0a7ea4", fontWeight: "700", fontSize: 14 },
-  // search
   searchWrap: {
     paddingHorizontal: 16,
     paddingVertical: 8,
@@ -222,7 +230,6 @@ const s = StyleSheet.create({
     fontSize: 14,
     color: "#000",
   },
-  // row
   row: {
     flexDirection: "row",
     alignItems: "center",
@@ -232,6 +239,18 @@ const s = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#f0f0f0",
   },
+  // Online dot on avatar
+  onlineDot: {
+    position: "absolute",
+    bottom: 1,
+    right: 1,
+    width: 13,
+    height: 13,
+    borderRadius: 7,
+    backgroundColor: "#52c41a",
+    borderWidth: 2,
+    borderColor: "#fff",
+  },
   rowInfo: { flex: 1, marginLeft: 12 },
   rowTop: {
     flexDirection: "row",
@@ -239,10 +258,17 @@ const s = StyleSheet.create({
     marginBottom: 3,
     alignItems: "center",
   },
-  rowName: { fontSize: 15, fontWeight: "600", color: "#111", flex: 1 },
+  rowNameWrap: { flexDirection: "row", alignItems: "center", gap: 6, flex: 1 },
+  rowName: { fontSize: 15, fontWeight: "600", color: "#111" },
+  onlineBadge: {
+    backgroundColor: "#52c41a",
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 999,
+  },
+  onlineBadgeText: { color: "#fff", fontSize: 9, fontWeight: "700" },
   rowTime: { fontSize: 12, color: "#999", marginLeft: 8 },
   rowMsg: { fontSize: 13, color: "#888" },
-  // empty
   empty: { alignItems: "center", paddingTop: 80, gap: 8 },
   emptyText: { color: "#888", fontSize: 14 },
   startBtn: {
@@ -253,7 +279,6 @@ const s = StyleSheet.create({
     borderRadius: 999,
   },
   startBtnText: { color: "#fff", fontWeight: "700" },
-  // error
   errorTitle: { fontSize: 16, fontWeight: "700", color: "#111", marginTop: 12 },
   errorMsg: {
     fontSize: 13,

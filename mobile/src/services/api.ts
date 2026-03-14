@@ -1,7 +1,7 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from "axios";
 import { storage } from "./storage";
 
-const BASE_URL = "http://192.168.1.176:8000/api"; // ← your PC IP (192.168.0.x)
+const BASE_URL = "http://192.168.18.38:8000/api"; // ← your PC IP (192.168.0.x)
 
 const api: AxiosInstance = axios.create({
   baseURL: BASE_URL,

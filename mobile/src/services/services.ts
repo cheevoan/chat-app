@@ -67,7 +67,11 @@ export const userService = {
     return data.data;
   },
   updateProfile: async (
-    fields: Partial<{ name: string; password: string }>,
+    fields: Partial<{
+      name: string;
+      current_password: string;
+      password: string;
+    }>,
   ): Promise<User> => {
     const { data } = await api.put("/users/profile", fields);
     const user = data.data ?? data;
@@ -203,24 +207,67 @@ export const messageService = {
   },
   sendToConversation: async (
     conversationId: number,
-    message: string,
+    message?: string,
+    files?: { uri: string; name: string; type: string }[],
   ): Promise<Message> => {
-    const { data } = await api.post("/messages", {
-      message,
-      conversation_id: conversationId,
-    });
-    console.log(
-      "sendToConversation raw:",
-      JSON.stringify(data).substring(0, 150),
-    );
-    return data.data ?? data;
+    const hasFiles = files && files.length > 0;
+    if (hasFiles) {
+      // Multipart form for files
+      const form = new FormData();
+      if (message) form.append("message", message);
+      form.append("conversation_id", String(conversationId));
+      files!.forEach((f) =>
+        form.append("attachments[]", {
+          uri: f.uri,
+          name: f.name,
+          type: f.type,
+        } as any),
+      );
+      const { data } = await api.post("/messages", form, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      return data.data ?? data;
+    } else {
+      // JSON for text-only — simpler and more reliable
+      const { data } = await api.post("/messages", {
+        message,
+        conversation_id: conversationId,
+      });
+      console.log(
+        "sendToConversation raw:",
+        JSON.stringify(data).substring(0, 150),
+      );
+      return data.data ?? data;
+    }
   },
-  sendToGroup: async (groupId: number, message: string): Promise<Message> => {
-    const { data } = await api.post("/messages", {
-      message,
-      group_id: groupId,
-    });
-    return data.data ?? data;
+  sendToGroup: async (
+    groupId: number,
+    message?: string,
+    files?: { uri: string; name: string; type: string }[],
+  ): Promise<Message> => {
+    const hasFiles = files && files.length > 0;
+    if (hasFiles) {
+      const form = new FormData();
+      if (message) form.append("message", message);
+      form.append("group_id", String(groupId));
+      files!.forEach((f) =>
+        form.append("attachments[]", {
+          uri: f.uri,
+          name: f.name,
+          type: f.type,
+        } as any),
+      );
+      const { data } = await api.post("/messages", form, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      return data.data ?? data;
+    } else {
+      const { data } = await api.post("/messages", {
+        message,
+        group_id: groupId,
+      });
+      return data.data ?? data;
+    }
   },
   edit: async (messageId: number, message: string): Promise<Message> => {
     const { data } = await api.put(`/messages/${messageId}`, { message });
